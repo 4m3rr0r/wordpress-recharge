@@ -38,7 +38,7 @@ case "$ACTION" in
     docker compose up -d db wordpress
 
     echo "[*] Waiting for the database to accept connections..."
-    until docker compose exec -T db mysqladmin ping -h localhost --silent >/dev/null 2>&1; do
+    until docker compose exec -T db mysqladmin ping -h 127.0.0.1 -uwordpress -pwordpress --silent >/dev/null 2>&1; do
       sleep 2
     done
 
@@ -47,11 +47,20 @@ case "$ACTION" in
       sleep 2
     done
 
+    echo "[*] Waiting for wp-config.php / DB connection via wp-cli ..."
+    for i in $(seq 1 30); do
+      docker compose run --rm -T wpcli wp db check >/dev/null 2>&1 && break
+      sleep 2
+    done
+
+    echo "[*] Fixing wp-content permissions (so uploads/plugins work) ..."
+    docker compose exec -T wordpress sh -c 'mkdir -p wp-content/uploads && chown -R www-data:www-data wp-content'
+
     echo "[*] Running WordPress core install (admin / admin) ..."
-    if docker compose run --rm wpcli wp core is-installed >/dev/null 2>&1; then
+    if docker compose run --rm -T wpcli wp core is-installed >/dev/null 2>&1; then
       echo "[*] WordPress already installed, skipping install step."
     else
-      docker compose run --rm wpcli wp core install \
+      docker compose run --rm -T wpcli wp core install \
         --url="http://localhost:${WP_PORT}" \
         --title="Vuln Lab" \
         --admin_user=admin \
@@ -59,6 +68,9 @@ case "$ACTION" in
         --admin_email=admin@example.com \
         --skip-email
     fi
+
+    # wp-cli runs as a different user; re-apply ownership after install
+    docker compose exec -T wordpress chown -R www-data:www-data wp-content
 
     echo
     echo "=================================================================="

@@ -9,12 +9,20 @@ services:
       MYSQL_PASSWORD: wordpress
     volumes:
       - db_data:/var/lib/mysql
+    # only healthy once the *real* server accepts TCP logins (not MySQL's
+    # temporary init server, which made the old mysqladmin ping succeed early)
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uwordpress -pwordpress --silent"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
 
   wordpress:
     image: wordpress:${WP_VERSION:-latest}
     restart: unless-stopped
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     ports:
       - "${WP_PORT:-8080}:80"
     environment:
@@ -25,13 +33,17 @@ services:
       WORDPRESS_DEBUG: 1
     volumes:
       - wp_data:/var/www/html
+      - ./uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
 
   # one-shot wp-cli runner, invoked via `docker compose run --rm wpcli ...`
   wpcli:
     image: wordpress:cli
+    user: "33:33"  # same uid as www-data in the wordpress image
     depends_on:
-      - wordpress
-      - db
+      db:
+        condition: service_healthy
+      wordpress:
+        condition: service_started
     environment:
       WORDPRESS_DB_HOST: db
       WORDPRESS_DB_NAME: wordpress
